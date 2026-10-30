@@ -86,10 +86,14 @@ class _BillerHomePageState extends State<BillerHomePage> {
   final _customerPhoneController = TextEditingController();
   final _customerGstinController = TextEditingController();
 
-  // Item entry
-  String? _selectedCategory;
+  // Item entry (Editable Dropdown / TextField)
+  final _categoryController = TextEditingController();
+  final _categoryFocusNode = FocusNode();
   final _quantityController = TextEditingController();
   final _priceController = TextEditingController();
+
+  // Tax toggle (Default: ON)
+  bool _applyTax = true;
 
   // Discount & Delivery
   final _discountController = TextEditingController();
@@ -125,6 +129,8 @@ class _BillerHomePageState extends State<BillerHomePage> {
     _customerNameController.dispose();
     _customerPhoneController.dispose();
     _customerGstinController.dispose();
+    _categoryController.dispose();
+    _categoryFocusNode.dispose();
     _quantityController.dispose();
     _priceController.dispose();
     _discountController.dispose();
@@ -137,6 +143,7 @@ class _BillerHomePageState extends State<BillerHomePage> {
   }
 
   double get _tax {
+    if (!_applyTax) return 0.0;
     return _subtotal * 0.05; // 5% GST
   }
 
@@ -155,20 +162,22 @@ class _BillerHomePageState extends State<BillerHomePage> {
   }
 
   void _addItem() {
-    if (_selectedCategory == null ||
-        _quantityController.text.trim().isEmpty ||
-        _priceController.text.trim().isEmpty) {
+    final category = _categoryController.text.trim();
+    final qtyText = _quantityController.text.trim();
+    final priceText = _priceController.text.trim();
+
+    if (category.isEmpty || qtyText.isEmpty || priceText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please select category and enter valid quantity and price.'),
+          content: Text('Please select or enter category, quantity, and price.'),
           backgroundColor: Colors.redAccent,
         ),
       );
       return;
     }
 
-    final qty = double.tryParse(_quantityController.text.trim());
-    final price = double.tryParse(_priceController.text.trim());
+    final qty = double.tryParse(qtyText);
+    final price = double.tryParse(priceText);
 
     if (qty == null || price == null || qty <= 0 || price <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -183,12 +192,18 @@ class _BillerHomePageState extends State<BillerHomePage> {
     setState(() {
       _items.add(
         BillItem(
-          category: _selectedCategory!,
+          category: category,
           quantity: qty,
           price: price,
         ),
       );
-      _selectedCategory = null;
+
+      // Add to category options if not already present
+      if (!_categories.contains(category)) {
+        _categories.add(category);
+      }
+
+      _categoryController.clear();
       _quantityController.clear();
       _priceController.clear();
     });
@@ -205,11 +220,12 @@ class _BillerHomePageState extends State<BillerHomePage> {
       _customerNameController.clear();
       _customerPhoneController.clear();
       _customerGstinController.clear();
-      _selectedCategory = null;
+      _categoryController.clear();
       _quantityController.clear();
       _priceController.clear();
       _discountController.clear();
       _deliveryController.clear();
+      _applyTax = true; // reset back to default ON
       _items.clear();
     });
     ScaffoldMessenger.of(context).showSnackBar(
@@ -284,7 +300,7 @@ class _BillerHomePageState extends State<BillerHomePage> {
                     ],
                   ),
                   pw.Text(
-                    'TAX INVOICE',
+                    _applyTax ? 'TAX INVOICE' : 'INVOICE',
                     style: pw.TextStyle(
                       font: font,
                       fontSize: 20,
@@ -370,7 +386,9 @@ class _BillerHomePageState extends State<BillerHomePage> {
                     child: pw.Column(
                       children: [
                         _buildPdfSummaryRow('Subtotal:', currencyFormat.format(_subtotal), font),
-                        _buildPdfSummaryRow('Tax (5%):', currencyFormat.format(_tax), font),
+                        // Only include tax if the tax toggle is ON
+                        if (_applyTax)
+                          _buildPdfSummaryRow('Tax (5%):', currencyFormat.format(_tax), font),
                         if (_discount > 0)
                           _buildPdfSummaryRow('Discount:', '-${currencyFormat.format(_discount)}', font),
                         if (_deliveryCharge > 0)
@@ -567,22 +585,80 @@ class _BillerHomePageState extends State<BillerHomePage> {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          value: _selectedCategory,
-                          decoration: const InputDecoration(
-                            hintText: 'Select Category',
-                          ),
-                          hint: const Text('Select Category'),
-                          items: _categories.map((cat) {
-                            return DropdownMenuItem<String>(
-                              value: cat,
-                              child: Text(cat),
+
+                        // Editable Dropdown / Textfield (RawAutocomplete with PopupMenu)
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            return RawAutocomplete<String>(
+                              textEditingController: _categoryController,
+                              focusNode: _categoryFocusNode,
+                              optionsBuilder: (TextEditingValue textEditingValue) {
+                                if (textEditingValue.text.isEmpty) {
+                                  return _categories;
+                                }
+                                return _categories.where((cat) {
+                                  return cat.toLowerCase().contains(textEditingValue.text.toLowerCase());
+                                });
+                              },
+                              fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                                return TextField(
+                                  controller: controller,
+                                  focusNode: focusNode,
+                                  decoration: InputDecoration(
+                                    labelText: 'Select or Type Category',
+                                    hintText: 'Select Category or type new item...',
+                                    suffixIcon: PopupMenuButton<String>(
+                                      icon: const Icon(Icons.arrow_drop_down, size: 26),
+                                      tooltip: 'Choose category',
+                                      onSelected: (String val) {
+                                        controller.text = val;
+                                        focusNode.unfocus();
+                                      },
+                                      itemBuilder: (BuildContext context) {
+                                        return _categories.map((String cat) {
+                                          return PopupMenuItem<String>(
+                                            value: cat,
+                                            child: Text(cat),
+                                          );
+                                        }).toList();
+                                      },
+                                    ),
+                                  ),
+                                );
+                              },
+                              optionsViewBuilder: (context, onSelected, options) {
+                                return Align(
+                                  alignment: Alignment.topLeft,
+                                  child: Material(
+                                    elevation: 4.0,
+                                    borderRadius: BorderRadius.circular(8),
+                                    color: Colors.white,
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        maxWidth: constraints.maxWidth,
+                                        maxHeight: 220,
+                                      ),
+                                      child: ListView.separated(
+                                        padding: const EdgeInsets.symmetric(vertical: 4),
+                                        shrinkWrap: true,
+                                        itemCount: options.length,
+                                        separatorBuilder: (_, __) => const Divider(height: 1),
+                                        itemBuilder: (BuildContext context, int index) {
+                                          final String option = options.elementAt(index);
+                                          return ListTile(
+                                            dense: true,
+                                            title: Text(option),
+                                            onTap: () {
+                                              onSelected(option);
+                                            },
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
                             );
-                          }).toList(),
-                          onChanged: (val) {
-                            setState(() {
-                              _selectedCategory = val;
-                            });
                           },
                         ),
                         const SizedBox(height: 12),
@@ -704,9 +780,52 @@ class _BillerHomePageState extends State<BillerHomePage> {
                         ),
                         const SizedBox(height: 14),
                         _buildSummaryRow('Subtotal:', currencyFormat.format(_subtotal)),
-                        const SizedBox(height: 8),
-                        _buildSummaryRow('Tax (5%):', currencyFormat.format(_tax)),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 6),
+
+                        // Tax Toggle Row (Default set to ON)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Tax (5%):',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: _applyTax ? Colors.black87 : Colors.grey.shade600,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                SizedBox(
+                                  height: 28,
+                                  child: FittedBox(
+                                    fit: BoxFit.contain,
+                                    child: Switch(
+                                      value: _applyTax,
+                                      activeColor: tealColor,
+                                      onChanged: (bool value) {
+                                        setState(() {
+                                          _applyTax = value;
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              _applyTax ? currencyFormat.format(_tax) : '₹0.00 (Off)',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: _applyTax ? Colors.black87 : Colors.grey.shade500,
+                                fontWeight: _applyTax ? FontWeight.normal : FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 10),
                         TextField(
                           controller: _discountController,
                           keyboardType: const TextInputType.numberWithOptions(decimal: true),
