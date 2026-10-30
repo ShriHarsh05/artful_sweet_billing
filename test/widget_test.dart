@@ -9,6 +9,6 @@ void main() {
     expect(find.text('Add Item'), findsNWidgets(2)); // Header + Button
     expect(find.text('Bill Summary'), findsOneWidget);
     expect(find.text('Preview PDF'), findsOneWidget);
-    expect(find.text('Share PDF'), findsOneWidget);
+    expect(find.text('Share on WhatsApp'), findsOneWidget);
   });
 }

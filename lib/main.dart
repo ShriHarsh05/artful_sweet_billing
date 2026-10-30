@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -477,21 +478,89 @@ class _BillerHomePageState extends State<BillerHomePage> {
     );
   }
 
-  Future<void> _sharePdf() async {
+  Future<void> _shareOnWhatsApp() async {
     if (_items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please add at least one item before sharing PDF.')),
+        const SnackBar(content: Text('Please add at least one item before sharing.')),
       );
       return;
     }
-    final pdfBytes = await _generatePdfData();
-    final filename = 'Invoice-${DateFormat('yyyyMMdd-HHmmss').format(DateTime.now())}.pdf';
-    await Printing.sharePdf(
-      bytes: pdfBytes,
-      filename: filename,
-      subject: 'Here is your invoice from RASHI ENTERPRISES!',
-      body: 'Here is your invoice from RASHI ENTERPRISES!',
-    );
+
+    // 1. Generate & download/save PDF so user has the file ready to attach
+    try {
+      final pdfBytes = await _generatePdfData();
+      final filename = 'Invoice-${DateFormat('yyyyMMdd-HHmmss').format(DateTime.now())}.pdf';
+      await Printing.sharePdf(
+        bytes: pdfBytes,
+        filename: filename,
+        subject: 'Here is your invoice from RASHI ENTERPRISES!',
+      );
+    } catch (e) {
+      debugPrint('Printing share error: $e');
+    }
+
+    // 2. Prepare WhatsApp message
+    final invoiceNo = DateFormat('yyyyMMdd-HHmmss').format(DateTime.now());
+    final dateStr = DateFormat('dd-MM-yyyy').format(DateTime.now());
+    final custName = _customerNameController.text.trim();
+
+    final buffer = StringBuffer();
+    buffer.writeln('🧾 *INVOICE: RASHI ENTERPRISES*');
+    buffer.writeln('GSTIN: 27ADDPD5275C1ZW');
+    buffer.writeln('--------------------------------');
+    buffer.writeln('*Invoice No:* $invoiceNo');
+    buffer.writeln('*Date:* $dateStr');
+    if (custName.isNotEmpty) {
+      buffer.writeln('*Customer:* $custName');
+    }
+    buffer.writeln('--------------------------------');
+    buffer.writeln('*Items:*');
+    for (int i = 0; i < _items.length; i++) {
+      final it = _items[i];
+      buffer.writeln('${i + 1}. ${it.category} (${it.quantity} kg @ ${currencyFormat.format(it.price)}) = ${currencyFormat.format(it.total)}');
+    }
+    buffer.writeln('--------------------------------');
+    buffer.writeln('*Subtotal:* ${currencyFormat.format(_subtotal)}');
+    if (_applyTax) {
+      buffer.writeln('*Tax (5%):* ${currencyFormat.format(_tax)}');
+    }
+    if (_discount > 0) {
+      buffer.writeln('*Discount:* -${currencyFormat.format(_discount)}');
+    }
+    if (_deliveryCharge > 0) {
+      buffer.writeln('*Delivery Charge:* ${currencyFormat.format(_deliveryCharge)}');
+    }
+    buffer.writeln('*Grand Total:* ${currencyFormat.format(_grandTotal)}');
+    final roundedTotal = _grandTotal.round();
+    buffer.writeln('*Amount in Words:* ${NumberToWords.convert(roundedTotal).toUpperCase()} RUPEES ONLY');
+    buffer.writeln('--------------------------------');
+    buffer.writeln('Thank you for your purchase!');
+
+    // Clean phone number (strip non-digits)
+    String rawPhone = _customerPhoneController.text.trim().replaceAll(RegExp(r'\D'), '');
+    String phoneParam = '';
+    if (rawPhone.isNotEmpty) {
+      if (rawPhone.length == 10) {
+        phoneParam = '91$rawPhone';
+      } else {
+        phoneParam = rawPhone;
+      }
+    }
+
+    final encodedText = Uri.encodeComponent(buffer.toString());
+    final String urlString;
+    if (phoneParam.isNotEmpty) {
+      urlString = 'https://api.whatsapp.com/send?phone=$phoneParam&text=$encodedText';
+    } else {
+      urlString = 'https://api.whatsapp.com/send?text=$encodedText';
+    }
+
+    final uri = Uri.parse(urlString);
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      await launchUrl(uri);
+    }
   }
 
   @override
@@ -893,18 +962,18 @@ class _BillerHomePageState extends State<BillerHomePage> {
                   height: 44,
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: greenColor,
+                      backgroundColor: const Color(0xFF25D366),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6),
                       ),
                     ),
-                    icon: const Icon(Icons.share, size: 20),
+                    icon: const Icon(Icons.chat_outlined, size: 20),
                     label: const Text(
-                      'Share PDF',
+                      'Share on WhatsApp',
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    onPressed: _sharePdf,
+                    onPressed: _shareOnWhatsApp,
                   ),
                 ),
                 const SizedBox(height: 24),
